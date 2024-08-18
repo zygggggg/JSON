@@ -1,0 +1,7 @@
+﻿  JsonParse.c
+  test.c
+  正在生成代码...
+C:\Users\15487\Desktop\JsonParser\JsonParser1\JsonParse.c(71,38): warning C4047: “函数”:“lept_value *”与“lept_value **”的间接级别不同
+C:\Users\15487\Desktop\JsonParser\JsonParser1\JsonParse.c(71,38): warning C4024: “lept_parse_value”: 形参和实参 2 的类型不同
+C:\Users\15487\Desktop\JsonParser\JsonParser1\JsonParse.c(81,37): warning C4028: 形参 1 与声明不同
+  JsonParser1.vcxproj -> C:\Users\15487\Desktop\JsonParser\JsonParser1\x64\Debug\JsonParser1.exe
