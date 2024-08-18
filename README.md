@@ -1,39 +1,39 @@
-这是zygg完成json解析器的历程 做这个c语言项目以巩固数据结构知识
-JSON（JavaScript Object Notation）是一个用于数据交换的文本格式，现时的标准为ECMA-404。
-虽然 JSON 源至于 JavaScript 语言，但它只是一种数据格式，可用于任何编程语言。现时具类似功能的格式有 XML、YAML，当中以 JSON 的语法最为简单。
-例如，一个动态网页想从服务器获得数据时，服务器从数据库查找数据，然后把数据转换成 JSON 文本格式：
+这是zygg完成json解析器的历程 做这个c语言项目以巩固数据结构知识 \n
+LeptJSON JSON 解析器项目文档
+概览
+LeptJSON 是一个轻量级且高效的 JSON 解析器，用 C 语言实现。它旨在简单易用且速度快。该库提供了基本的功能来解析 JSON 字符串为结构化的格式，便于后续处理和查询。
 
+主要特性
+简单的 API：提供了简洁的接口来解析 JSON。
+高效的解析：优化了速度和最小内存使用。
+错误处理：返回详细的错误码以帮助诊断解析问题。
+可移植性强：用纯 C 语言编写，使其在不同平台上高度可移植。
+架构设计
+LeptJSON 的架构模块化且简单：
 
-{
-    "title": "Design Patterns",
-    "subtitle": "Elements of Reusable Object-Oriented Software",
-    "author": [
-        "Erich Gamma",
-        "Richard Helm",
-        "Ralph Johnson",
-        "John Vlissides"
-    ],
-    "year": 2009,
-    "weight": 1.8,
-    "hardcover": true,
-    "publisher": {
-        "Company": "Pearson Education",
-        "Country": "India"
-    },
-    "website": null
-}
-网页的脚本代码就可以把此 JSON 文本解析为内部的数据结构去使用。
+头文件 (leptjson.h)：
 
-从此例子可看出，JSON 是树状结构，而 JSON 只包含 6 种数据类型：
+定义了用于表示 JSON 值的类型。
+声明了主要函数和错误码。
+实现文件 (leptjson.c)：
 
-null: 表示为 null
-boolean: 表示为 true 或 false
-number: 一般的浮点数表示方式，在下一单元详细说明
-string: 表示为 "..."
-array: 表示为 [ ... ]
-object: 表示为 { ... }
-我们要实现的 JSON 库，主要是完成 3 个需求：
+包含了 JSON 解析的核心逻辑。
+利用了辅助函数来解析特定的 JSON 值，如 true、false 和 null。
+实现了跳过空白字符以及错误检查机制。
+关键组件
+lept_value 结构体：
 
-把 JSON 文本解析为一个树状数据结构（parse）。
-提供接口访问该数据结构（access）。
-把数据结构转换成 JSON 文本（stringify）。
+表示一个解析后的 JSON 值。
+包含了一个字段 type 来指示 JSON 值的类型。
+lept_context 结构体：
+
+用来追踪 JSON 字符串中的当前位置。
+解析函数：
+
+lept_parse：解析 JSON 的主函数。初始化上下文，调用解析逻辑并处理错误。
+lept_parse_true, lept_parse_false, lept_parse_null：辅助函数，用于解析布尔值和 null。
+lept_parse_value：确定下一个 JSON 值的类型，并调用相应的解析函数。
+工具函数：
+
+lept_parse_whitespace：跳过空白字符。
+EXPECT 宏：断言下一个字符与预期匹配。
