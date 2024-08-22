@@ -14,6 +14,7 @@ typedef enum {
 
 // 定义JSON值的结构体
 typedef struct {
+    double n;
     lept_type type;  // JSON值的类型
 }lept_value;
 
@@ -22,7 +23,8 @@ enum {
     LEPT_PARSE_OK = 0,         // 解析成功
     LEPT_PARSE_EXPECT_VALUE,   // 期望得到值
     LEPT_PARSE_INVALID_VALUE,  // 无效的值
-    LEPT_PARSE_ROOT_NOT_SINGULAR // 根节点不是单一的
+    LEPT_PARSE_ROOT_NOT_SINGULAR, // 根节点不是单一的
+    LEPT_PARSE_NUMBER_TOO_BIG // 数字太大
 };
 
 // 解析JSON字符串
@@ -31,4 +33,5 @@ int lept_parse(lept_value* v, const char* json);
 // 获取解析后的JSON值的类型
 lept_type lept_get_type(const lept_value* v);  
 
+double lept_get_number(const lept_value* v);
 #endif /* JSONPARSE_H__ */
