@@ -22,7 +22,7 @@
 #define ISDIGIT(ch)         ((ch) >= '0' && (ch) <= '9')
 #define ISDIGIT1TO9(ch)     ((ch) >= '1' && (ch) <= '9')
 #define PUTC(c , ch)  do { *(char*)lept_context_push(c, sizeof(char)) = (ch); } while(0) // 返回的是空位 让ch补进去
-
+#define STRING_ERROR(ret) do { c->top = head; return ret; } while(0)
 
 // 定义解析上下文结构体
 typedef struct {
@@ -103,9 +103,78 @@ static int lept_parse_number(lept_context* c, lept_value* v) {
     return LEPT_PARSE_OK;
 }
 
+// 从给定的字符串 p 中解析出四个十六进制字符，
+// 并将它们转换成一个无符号整数 u。如果成功解析，则返回指向字符串中下一个字符的指针；
+// 如果解析失败（即遇到非十六进制字符），则返回 NULL。
+static const char* lept_parse_hex4(const char* p, unsigned* u) {
+    int i;
+    *u = 0;
+    // 循环四次，每次处理一个十六进制字符。
+    for (i = 0; i < 4; i++) {
+        // 获取当前字符。
+        char ch = *p++;
+
+        // 将 u 左移四位，为新读取的十六进制字符腾出空间。
+        *u <<= 4;
+
+        // 根据字符 ch 的值，将其转换为对应的十六进制数值。
+        if (ch >= '0' && ch <= '9')  // 如果 ch 是一个十进制数字（0-9）。
+            *u |= ch - '0';          // 将 ch 转换成对应的数值，并与 u 进行按位或操作。
+        else if (ch >= 'A' && ch <= 'F')  // 如果 ch 是大写字母 A-F。
+            *u |= ch - ('A' - 10);  // 将 ch 转换成对应的数值（10-15），并与 u 进行按位或操作。
+        else if (ch >= 'a' && ch <= 'f')  // 如果 ch 是小写字母 a-f。
+            *u |= ch - ('a' - 10);  // 将 ch 转换成对应的数值（10-15），并与 u 进行按位或操作。
+        else  // 如果 ch 不是有效的十六进制字符。
+            return NULL;  // 返回 NULL 表示解析失败。
+    }
+
+    // 如果成功解析了四个十六进制字符，则返回指向字符串中下一个字符的指针。
+    return p;
+}
+
+/*
+U+20AC 在 U+0800 ~ U+FFFF 的范围内，应编码成 3 个字节。
+U+20AC 的二进位为 10000010101100
+3 个字节的情况我们要 16 位的码点，所以在前面补两个 0，成为 0010000010101100
+按上表把二进位分成 3 组：0010, 000010, 101100
+加上每个字节的前缀：11100010, 10000010, 10101100
+用十六进位表示即：0xE2, 0x82, 0xAC
+*/
+/*
+如果 u在 0x00 到 0x7F 之间，使用 1 字节编码。
+如果 u在 0x80 到 0x7FF 之间，使用 2 字节编码。
+如果u在 0x800 到 0xFFFF 之间，使用 3 字节编码.
+如果 u在 0x10000 到 0x10FFFF 之间，使用 4 字节编码。
+*/
+/*
+重要！ u就是一个数 即使他是unsigned 通常觉得是十进制 这里想象他为十六进制在操作
+*/
+static void lept_encode_utf8(lept_context* c, unsigned u) {
+    if (u <= 0x7F)
+        PUTC(c, u & 0xFF);
+    else if (u <= 0x7FF) {
+        PUTC(c, 0xC0 | ((u >> 6) & 0xFF));
+        PUTC(c, 0x80 | (u & 0x3F));
+    }
+    else if (u <= 0xFFFF) {
+        PUTC(c, 0xE0 | ((u >> 12) & 0xFF));
+        PUTC(c, 0x80 | ((u >> 6) & 0x3F));
+        PUTC(c, 0x80 | (u & 0x3F));
+    }
+    else {
+        assert(u <= 0x10FFFF);
+        PUTC(c, 0xF0 | ((u >> 18) & 0xFF));
+        PUTC(c, 0x80 | ((u >> 12) & 0x3F));
+        PUTC(c, 0x80 | ((u >> 6) & 0x3F));
+        PUTC(c, 0x80 | (u & 0x3F));
+    }
+}
+
+
 static int lept_parse_string(lept_context* c, lept_value* v)
 {
     size_t head, len;
+    unsigned u, u2;
     head = c->top;
     char* p;
     EXPECT(c, '\"');
@@ -134,11 +203,27 @@ static int lept_parse_string(lept_context* c, lept_value* v)
                     case 'n':  PUTC(c, '\n'); break;
                     case 'r':  PUTC(c, '\r'); break;
                     case 't':  PUTC(c, '\t'); break;
+                    case 'u': 
+                        if (!(p = lept_parse_hex4(p, &u))) // 由字符串转为数值 想象为十六进制 如果解析失败，返回 NULL。
+                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+                        if (u >= 0xD800 && u <= 0xDBFF) { /* surrogate pair */
+                            if (*p++ != '\\') // 再来一次
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                            if (*p++ != 'u')
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                            if (!(p = lept_parse_hex4(p, &u2)))
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+                            if (u2 < 0xDC00 || u2 > 0xDFFF)
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                            u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
+                        }
+                        lept_encode_utf8(c, u);
+                        break;
                     default:
-                        c->top = head;
-                        return LEPT_PARSE_INVALID_STRING_ESCAPE;
+                        STRING_ERROR(LEPT_PARSE_INVALID_STRING_ESCAPE);
                 }
                 break; // 这个break是关键！！！！
+
             default: // 如果是普通字符
                 if ((unsigned char)ch < 0x20)// 如果是控制字符
                 {
@@ -159,7 +244,7 @@ static int lept_parse_value(lept_context *c , lept_value *v)
         case 'n':  return lept_parse_new(c, v, "null", LEPT_NULL);
         default:   return lept_parse_number(c, v);
         case '\0': return LEPT_PARSE_EXPECT_VALUE;
-        case '\"': return lept_parse_string(c, v);
+        case '"': return lept_parse_string(c, v);
     }
 }
 
