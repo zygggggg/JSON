@@ -1,3 +1,4 @@
-﻿  JsonParse.c
-C:\Users\15487\Desktop\JsonParser\JsonParser1\JsonParse.c(132,37): warning C4028: 形参 1 与声明不同
+﻿  test.c
+C:\Users\15487\Desktop\JsonParser\JsonParser1\test.c(187,5): warning C4013: “lept_set_boolean”未定义；假设外部返回 int
+C:\Users\15487\Desktop\JsonParser\JsonParser1\test.c(198,5): warning C4013: “lept_set_number”未定义；假设外部返回 int
   JsonParser1.vcxproj -> C:\Users\15487\Desktop\JsonParser\JsonParser1\x64\Debug\JsonParser1.exe
