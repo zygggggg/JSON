@@ -132,6 +132,15 @@ static const char* lept_parse_hex4(const char* p, unsigned* u) {
     return p;
 }
 
+// 方法2 利用strtol标准库 解析十六进制数字
+
+//static const char* lept_parse_hex4(const char* p, unsigned* u) {
+//    char* end;
+//    *u = (unsigned)strtol(p, &end, 16);
+//    return end == p + 4 ? end : NULL;
+//}
+
+
 /*
 U+20AC 在 U+0800 ~ U+FFFF 的范围内，应编码成 3 个字节。
 U+20AC 的二进位为 10000010101100
@@ -170,10 +179,15 @@ static void lept_encode_utf8(lept_context* c, unsigned u) {
     }
 }
 
+/*
+成员的键也是一个 JSON 字符串，然而，我们不使用 lept_value 存储键，因为这样会浪费了当中 type 这个无用的字段。
+由于 lept_parse_string() 是直接地把解析的结果写进一个 lept_value，
+所以我们先用「提取方法（extract method）」的重构方式，把解析 JSON 字符串及写入 lept_value 分拆成两部分：
+*/
+#define STRING_ERROR(ret) do { c->top = head; return ret; } while(0)
 
-static int lept_parse_string(lept_context* c, lept_value* v)
-{
-    size_t head, len;
+static int lept_parse_string_raw(lept_context* c, char** str, size_t* len) {
+    size_t head;
     unsigned u, u2;
     head = c->top;
     char* p;
@@ -185,8 +199,8 @@ static int lept_parse_string(lept_context* c, lept_value* v)
         switch (ch)
         {
             case '\"':
-                len = c->top - head;
-                lept_set_string(v, (const char*)lept_context_pop(c, len), len);
+                *len = c->top - head;
+                *str = lept_context_pop(c, *len);
                 c->json = p;
                 return LEPT_PARSE_OK;
             case '\0':
@@ -195,77 +209,283 @@ static int lept_parse_string(lept_context* c, lept_value* v)
             case '\\':
                 switch (*p++)
                 {
-                    case '\"': PUTC(c, '\"'); break;
-                    case '\\': PUTC(c, '\\'); break;
-                    case '/':  PUTC(c, '/'); break;
-                    case 'b':  PUTC(c, '\b'); break;
-                    case 'f':  PUTC(c, '\f'); break;
-                    case 'n':  PUTC(c, '\n'); break;
-                    case 'r':  PUTC(c, '\r'); break;
-                    case 't':  PUTC(c, '\t'); break;
-                    case 'u': 
-                        if (!(p = lept_parse_hex4(p, &u))) // 由字符串转为数值 想象为十六进制 如果解析失败，返回 NULL。
+                case '\"': PUTC(c, '\"'); break;
+                case '\\': PUTC(c, '\\'); break;
+                case '/':  PUTC(c, '/'); break;
+                case 'b':  PUTC(c, '\b'); break;
+                case 'f':  PUTC(c, '\f'); break;
+                case 'n':  PUTC(c, '\n'); break;
+                case 'r':  PUTC(c, '\r'); break;
+                case 't':  PUTC(c, '\t'); break;
+                case 'u':
+                    if (!(p = lept_parse_hex4(p, &u))) // 由字符串转为数值 想象为十六进制 如果解析失败，返回 NULL。
+                        STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+                    if (u >= 0xD800 && u <= 0xDBFF) { /* surrogate pair */
+                        if (*p++ != '\\') // 再来一次
+                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                        if (*p++ != 'u')
+                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                        if (!(p = lept_parse_hex4(p, &u2)))
                             STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
-                        if (u >= 0xD800 && u <= 0xDBFF) { /* surrogate pair */
-                            if (*p++ != '\\') // 再来一次
-                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
-                            if (*p++ != 'u')
-                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
-                            if (!(p = lept_parse_hex4(p, &u2)))
-                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
-                            if (u2 < 0xDC00 || u2 > 0xDFFF)
-                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
-                            u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
-                        }
-                        lept_encode_utf8(c, u);
-                        break;
-                    default:
-                        STRING_ERROR(LEPT_PARSE_INVALID_STRING_ESCAPE);
+                        if (u2 < 0xDC00 || u2 > 0xDFFF)
+                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                        u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
+                    }
+                    lept_encode_utf8(c, u);
+                    break;
+                default:
+                    STRING_ERROR(LEPT_PARSE_INVALID_STRING_ESCAPE);
                 }
                 break; // 这个break是关键！！！！
 
             default: // 如果是普通字符
                 if ((unsigned char)ch < 0x20)// 如果是控制字符
                 {
-                    c->top = head;
-                    return LEPT_PARSE_INVALID_STRING_CHAR;
+                    STRING_ERROR(LEPT_PARSE_INVALID_STRING_CHAR) ;
                 }
                 PUTC(c, ch); // 添加进去
 
         }
     }
 }
-static int lept_parse_value(lept_context *c , lept_value *v)
-{
-    switch (*c->json)
-    {
-        case 't':  return lept_parse_new(c, v, "true", LEPT_TRUE);
-        case 'f':  return lept_parse_new(c, v, "false", LEPT_FALSE);
-        case 'n':  return lept_parse_new(c, v, "null", LEPT_NULL);
-        default:   return lept_parse_number(c, v);
-        case '\0': return LEPT_PARSE_EXPECT_VALUE;
-        case '"': return lept_parse_string(c, v);
+
+static int lept_parse_string(lept_context* c, lept_value* v) {
+    size_t len;
+    char* s;
+    int ret;
+    if ((ret = lept_parse_string_raw(c, &s, &len)) == LEPT_PARSE_OK)
+        lept_set_string(v, s, len);
+    return ret;
+}
+
+//
+//static int lept_parse_string(lept_context* c, lept_value* v)
+//{
+//    size_t head, len;
+//    unsigned u, u2;
+//    head = c->top;
+//    char* p;
+//    EXPECT(c, '\"');
+//    p = c->json;
+//    for (; ; )
+//    {
+//        char ch = *p++;
+//        switch (ch)
+//        {
+//            case '\"':
+//                len = c->top - head;
+//                lept_set_string(v, (const char*)lept_context_pop(c, len), len);
+//                c->json = p;
+//                return LEPT_PARSE_OK;
+//            case '\0':
+//                c->top = head;
+//                return LEPT_PARSE_MISS_QUOTATION_MARK;
+//            case '\\':
+//                switch (*p++)
+//                {
+//                    case '\"': PUTC(c, '\"'); break;
+//                    case '\\': PUTC(c, '\\'); break;
+//                    case '/':  PUTC(c, '/'); break;
+//                    case 'b':  PUTC(c, '\b'); break;
+//                    case 'f':  PUTC(c, '\f'); break;
+//                    case 'n':  PUTC(c, '\n'); break;
+//                    case 'r':  PUTC(c, '\r'); break;
+//                    case 't':  PUTC(c, '\t'); break;
+//                    case 'u': 
+//                        if (!(p = lept_parse_hex4(p, &u))) // 由字符串转为数值 想象为十六进制 如果解析失败，返回 NULL。
+//                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+//                        if (u >= 0xD800 && u <= 0xDBFF) { /* surrogate pair */
+//                            if (*p++ != '\\') // 再来一次
+//                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+//                            if (*p++ != 'u')
+//                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+//                            if (!(p = lept_parse_hex4(p, &u2)))
+//                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+//                            if (u2 < 0xDC00 || u2 > 0xDFFF)
+//                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+//                            u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
+//                        }
+//                        lept_encode_utf8(c, u);
+//                        break;
+//                    default:
+//                        STRING_ERROR(LEPT_PARSE_INVALID_STRING_ESCAPE);
+//                }
+//                break; // 这个break是关键！！！！
+//
+//            default: // 如果是普通字符
+//                if ((unsigned char)ch < 0x20)// 如果是控制字符
+//                {
+//                    c->top = head;
+//                    return LEPT_PARSE_INVALID_STRING_CHAR;
+//                }
+//                PUTC(c, ch); // 添加进去
+//
+//        }
+//    }
+//}
+
+
+static int lept_parse_value(lept_context* c, lept_value* v);
+
+static int lept_parse_array(lept_context* c, lept_value* v) {
+    size_t i, size = 0;
+    int ret;
+    EXPECT(c, '[');
+    lept_parse_whitespace(c);
+    // 如果下一个字符是 ']', 则数组为空
+    if (*c->json == ']') {
+        c->json++; // 消耗 ']' 字符
+        v->type = LEPT_ARRAY;
+        v->u.a.size = 0;
+        v->u.a.e = NULL;
+        return LEPT_PARSE_OK;
+    }
+    else {
+        for (;;) {
+            lept_value e;
+            lept_init(&e); 
+            if ((ret = lept_parse_value(c, &e)) != LEPT_PARSE_OK) {
+                break; 
+            }
+            // 将解析得到的元素压入上下文栈
+            memcpy(lept_context_push(c, sizeof(lept_value)), &e, sizeof(lept_value)); // e -> c
+            size++; // 元素数量加一
+            lept_parse_whitespace(c);
+            // 如果下一个字符是 ',', 则继续解析下一个元素
+            if (*c->json == ',') {
+                c->json++; 
+                lept_parse_whitespace(c);
+            }
+            // 如果下一个字符是 ']', 则结束数组
+            else if (*c->json == ']') {
+                c->json++; 
+                v->type = LEPT_ARRAY;
+                v->u.a.size = size;
+                size *= sizeof(lept_value);
+                memcpy(v->u.a.e = (lept_value*)malloc(size), lept_context_pop(c, size), size); // c -> v
+                return LEPT_PARSE_OK;
+            }
+            else {
+                ret = LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
+                break;
+            }
+        }
+
+        // 清理栈上的元素
+        for (i = 0; i < size; i++) {
+            lept_free((lept_value*)lept_context_pop(c, sizeof(lept_value)));
+        }
+            
+        return ret;
     }
 }
 
-//int lept_parse(lept_value* v, const char* json)
-//{
-//    lept_context c;
-//    c.json = json;
-//    v->type = LEPT_NULL;
-//    assert(v != NULL); //assert(v != NULL); 是一种防御性编程的做法，用于确保传入的指针不为空
-//    lept_parse_whitespace(&c);
-//    int ret;
-//    if ((ret = lept_parse_value(&c , v)) == LEPT_PARSE_OK) // 注意！！ 这里之前搞成 &c &v 然而v原本就是指针！ 所以错了！
-//    {
-//        if(*c.json != '\0')
-//        {
-//            v->type = LEPT_NULL;
-//            ret = LEPT_PARSE_ROOT_NOT_SINGULAR;
-//        }
-//    }
-//    return ret;
-//}
+/*
+{
+  "name": "Alice",
+  "age": 30,
+  "isStudent": false,
+  "hobbies": ["reading", "swimming", "traveling"],
+  "address": {
+    "street": "123 Main St",
+    "city": "New York",
+    "state": "NY"
+  },
+  "friends": [
+    {"name": "Bob", "age": 28},
+    {"name": "Charlie", "age": 32}
+  ]
+}
+*/
+
+static int lept_parse_object(lept_context* c, lept_value* v) {
+    size_t i, size;
+    lept_member m;
+    int ret;
+    EXPECT(c, '{');
+    lept_parse_whitespace(c);
+    if (*c->json == '}') {
+        c->json++;
+        v->type = LEPT_OBJECT;
+        v->u.o.size = 0;
+        v->u.o.m = NULL;
+        return LEPT_PARSE_OK;
+    }
+    else {
+        size = 0;
+        m.k = NULL;
+        for (; ;) {
+            char* str;
+            lept_init(&m.v); // 初始化成员值
+            if (*c->json != '"') {
+                ret = LEPT_PARSE_MISS_KEY;
+                break;
+            }
+            else {
+                if (ret = lept_parse_string_raw(c, &str, &m.klen) != LEPT_PARSE_OK) { // 重构string_raw 就是为了键可以直接用
+                    break;
+                }
+                memcpy(m.k = (char*)malloc(m.klen + 1), str, m.klen); // 注意 这里的m.k要分配空间！！ 下面地lept_context_push已经分配了空间 不用单独分配
+                m.k[m.klen] = '\0';
+                lept_parse_whitespace(c);
+            }
+            if (*c->json != ':') {
+                ret = LEPT_PARSE_MISS_COLON;
+                break;
+            }
+            c->json++;
+            lept_parse_whitespace(c);
+            if ((ret = lept_parse_value(c, &m.v)) != LEPT_PARSE_OK) { // 解析成员值
+                break;
+            }
+            memcpy(lept_context_push(c, sizeof(lept_member)), &m, sizeof(lept_member));// m -> c 将成员压入上下文栈
+            size++;
+            m.k = NULL;
+            lept_parse_whitespace(c);
+            if (*c->json == ',') {
+                c->json++;
+                lept_parse_whitespace(c);
+            }
+            else if (*c->json == '}') {
+                size_t s = sizeof(lept_member) * size;
+                c->json++;
+                v->type = LEPT_OBJECT;
+                v->u.o.size = size;
+                memcpy(v->u.o.m = (lept_member*)malloc(s), lept_context_pop(c, s), s); // 复制成员数组 c -> v
+                return LEPT_PARSE_OK;
+            }
+            else {
+                ret = LEPT_PARSE_MISS_COMMA_OR_CURLY_BRACKET;
+                break;
+            }
+            
+
+        }
+        free(m.k);
+        for (i = 0; i < size; i++) {
+            lept_member* m = (lept_member*)lept_context_pop(c, sizeof(lept_member));
+            free(m->k);
+            lept_free(&m->v);
+        }
+        v->type = LEPT_NULL;
+        return ret;
+    }
+    
+}
+
+static int lept_parse_value(lept_context* c, lept_value* v) {
+    switch (*c->json) {
+    case 't':  return lept_parse_new(c, v, "true", LEPT_TRUE);
+    case 'f':  return lept_parse_new(c, v, "false", LEPT_FALSE);
+    case 'n':  return lept_parse_new(c, v, "null", LEPT_NULL);
+    default:   return lept_parse_number(c, v);
+    case '"':  return lept_parse_string(c, v);
+    case '[':  return lept_parse_array(c, v);
+    case '{':  return lept_parse_object(c, v);
+    case '\0': return LEPT_PARSE_EXPECT_VALUE;
+    }
+}
+
 int lept_parse(lept_value* v, const char* json) { 
     lept_context c;
     int ret;
@@ -296,17 +516,30 @@ lept_type lept_get_type(lept_value *v)
 }
 
 
+
 void lept_free(lept_value* v) {
+    size_t i;
     assert(v != NULL);
-    if (v->type == LEPT_STRING) {
-        free(v->u.s.s);
+    switch (v->type) {
+        case LEPT_STRING:
+            free(v->u.s.s);
+            break; // break千万不能忘记
+        case LEPT_ARRAY:
+            for (i = 0; i < v->u.a.size; i++) {
+                lept_free(&v->u.a.e[i]);// 灵性 & v->u.a.e[i]    这个e[i] !!! 因为e是一个数组（用了指针） 并且这里是嵌套 所以要lept_free 而不是单纯的free
+            }
+            free(v->u.a.e);
+            break;
+        default: break;
     }
     v->type = LEPT_NULL;
 }
+
 // 获取解析后的JSON值的类型
 
 double lept_get_number(const lept_value* v) {
-    assert(v != NULL && v->type == LEPT_NUMBER);
+    assert(v != NULL);
+    assert(v->type == LEPT_NUMBER);
     return v->u.n;
 }
 void lept_set_number(lept_value* v, double n) {
@@ -343,4 +576,38 @@ void lept_set_string(lept_value* v, const char* s, size_t len) {
     v->u.s.s[len] = '\0';
     v->type = LEPT_STRING;
     v->u.s.len = len;
+}
+
+size_t lept_get_array_size(const lept_value* v) {
+    assert(v != NULL && v->type == LEPT_ARRAY);
+    return v->u.a.size;
+}
+
+lept_value* lept_get_array_element(const lept_value* v, size_t index) {
+    assert(v != NULL && v->type == LEPT_ARRAY);
+    assert(index < v->u.a.size);
+    return &v->u.a.e[index];
+}
+
+size_t lept_get_object_size(const lept_value* v) {
+    assert(v != NULL && v->type == LEPT_OBJECT);
+    return v->u.o.size;
+}
+
+const char* lept_get_object_key(const lept_value* v, size_t index) {
+    assert(v != NULL && v->type == LEPT_OBJECT);
+    assert(index < v->u.o.size);
+    return v->u.o.m[index].k;
+}
+
+size_t lept_get_object_key_length(const lept_value* v, size_t index) {
+    assert(v != NULL && v->type == LEPT_OBJECT);
+    assert(index < v->u.o.size);
+    return v->u.o.m[index].klen;
+}
+
+lept_value* lept_get_object_value(const lept_value* v, size_t index) {
+    assert(v != NULL && v->type == LEPT_OBJECT);
+    assert(index < v->u.o.size);
+    return &v->u.o.m[index].v;
 }

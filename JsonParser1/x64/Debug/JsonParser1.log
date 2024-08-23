@@ -1,4 +1,6 @@
-﻿  test.c
-C:\Users\15487\Desktop\JsonParser\JsonParser1\test.c(230,5): warning C4013: “lept_set_boolean”未定义；假设外部返回 int
-C:\Users\15487\Desktop\JsonParser\JsonParser1\test.c(241,5): warning C4013: “lept_set_number”未定义；假设外部返回 int
+﻿  JsonParse.c
+C:\Users\15487\Desktop\JsonParser\JsonParser1\JsonParse.c(195,16): warning C4090: “=”: 不同的“const”限定符
+C:\Users\15487\Desktop\JsonParser\JsonParser1\JsonParse.c(221,53): warning C4090: “=”: 不同的“const”限定符
+C:\Users\15487\Desktop\JsonParser\JsonParser1\JsonParse.c(228,58): warning C4090: “=”: 不同的“const”限定符
+C:\Users\15487\Desktop\JsonParser\JsonParser1\JsonParse.c(512,37): warning C4028: 形参 1 与声明不同
   JsonParser1.vcxproj -> C:\Users\15487\Desktop\JsonParser\JsonParser1\x64\Debug\JsonParser1.exe
